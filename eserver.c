@@ -5,8 +5,10 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/epoll.h>
+#include <netdb.h>
 
-#define PORT 8080                 // Server will listen on port 8080
+
+#define PORT 80                 // Server will listen on port 8080
 #define MAX_EVENTS 1024           // Maximum events epoll can handle at once
 #define BUFFER_SIZE 16384         // Buffer to store incoming HTTP request
 
@@ -264,25 +266,63 @@ void handle_client(int fd) {
 
 // Main function: starts the server
 int main() {
+struct addrinfo hints, *res;   // hints tells getaddrinfo what we want
+int server_fd;                 // server socket file descriptor
 
-    // Create TCP socket
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+memset(&hints, 0, sizeof(hints));  
+// clear hints structure
 
-    int opt = 1;
+hints.ai_family = AF_UNSPEC;        
+// allow ipv4 or ipv6
 
-    // Allow port reuse so server can restart quickly
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+hints.ai_socktype = SOCK_STREAM;    
+// use tcp
 
-    struct sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(PORT);   // Convert port to network format
-    addr.sin_addr.s_addr = INADDR_ANY;  // Accept connections from any IP
+hints.ai_flags = AI_PASSIVE;        
+// for server binding, bind to all local addresses
 
-    // Bind socket to port
-    bind(server_fd, (struct sockaddr*)&addr, sizeof(addr));
+char port_str[6];                   
+// port as string
 
-    // Start listening for client connections
-    listen(server_fd, 100);
+snprintf(port_str, sizeof(port_str), "%d", PORT);
+// convert port number to string
+
+if (getaddrinfo(NULL, port_str, &hints, &res) != 0) {
+    perror("getaddrinfo");
+    exit(1);
+}
+// get address info for binding
+
+server_fd = socket(res->ai_family,
+                   res->ai_socktype,
+                   res->ai_protocol);
+// create socket using returned info
+
+if (server_fd < 0) {
+    perror("socket");
+    exit(1);
+}
+// check socket creation
+
+int opt = 1;
+setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+// allow quick port reuse
+
+if (bind(server_fd, res->ai_addr, res->ai_addrlen) < 0) {
+    perror("bind");
+    exit(1);
+}
+// bind socket to ip and port
+
+freeaddrinfo(res);
+// free memory from getaddrinfo
+
+if (listen(server_fd, 100) < 0) {
+    perror("listen");
+    exit(1);
+}
+// start listening, 100 pending connections allowed
+
 
     // Create epoll instance for handling multiple clients
     int epoll_fd = epoll_create1(0);
@@ -307,7 +347,7 @@ int main() {
 
                 // New client is connecting
                 int client_fd = accept(server_fd, NULL, NULL);
-
+                printf("A client is connected to the server\n");
                 // Add client socket to epoll
                 event.events = EPOLLIN;
                 event.data.fd = client_fd;
